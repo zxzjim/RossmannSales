@@ -42,9 +42,9 @@
 
 # # Import Data and Libraries
 
-# In[1]:
+# In[52]:
 
-
+get_ipython().magic(u'matplotlib inline')
 import numba
 
 import pandas as pd
@@ -54,178 +54,130 @@ import matplotlib.pylab as pylab
 import seaborn as sns
 import math
 from datetime import datetime
+from datetime import timedelta
 
 from pandas.tools.plotting import scatter_matrix
+from pandas.tools.plotting import autocorrelation_plot
 from sklearn.ensemble import RandomForestRegressor
 
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import GridSearchCV
-
+import statsmodels.api as sm  
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.stattools import acf, pacf
 from statsmodels.tsa.arima_model import ARIMA
+from statsmodels.tsa.seasonal import seasonal_decompose
+from sklearn.metrics import mean_squared_error
+
+import gc
 
 
-# In[2]:
+# In[53]:
+
+pd.set_option('display.max_columns', None)
+
+
+# In[54]:
 
 plt.rcParams['agg.path.chunksize'] = 100000
 
 
-# In[3]:
+# In[55]:
 
 store_raw = pd.read_csv('store.csv')
 test_raw = pd.read_csv('test.csv')
 train_raw = pd.read_csv('train.csv')
 
 
-# In[4]:
+# In[56]:
 
-store_raw.head(20)
+store_raw.head()
 
 
-# In[5]:
+# In[57]:
 
 store_raw.info()
 
 
-# In[6]:
+# In[58]:
 
-train_raw.head(20)
+train_raw.head()
 
 
-# In[7]:
+# In[59]:
+
+test_raw.head()
+
+
+# In[60]:
 
 train_raw.tail()
 
 
-# In[8]:
+# In[61]:
 
-train_raw[train_raw['Store']==1]
+test_raw.tail()
 
 
-# In[9]:
+# In[62]:
 
 train_raw.info()
+
+
+# In[63]:
+
+test_raw.info()
 
 
 # # Data Wrangling
 
 # ## merge two tables
 
-# In[10]:
+# In[64]:
 
-train_store_raw = train_raw.merge(store_raw, on='Store')
-
-
-# In[11]:
-
-train_store_raw.head(20)
-
-
-# In[12]:
-
-train_store_raw.info()
+train_store_raw = train_raw.merge(store_raw, on='Store', how='left')
+test_store_raw = test_raw.merge(store_raw, on='Store',how='left')
 
 
 # ## change column types
 
-# In[13]:
+# In[65]:
 
-train_store_raw['Date_formated'] = pd.to_datetime(train_store_raw['Date'], format='%Y-%m-%d')
-
-
-# In[14]:
-
-train_store_raw.head()
-
-
-# In[15]:
-
-train_store_raw.info()
+train_store_raw['Date_formatted'] = pd.to_datetime(train_store_raw['Date'], format='%Y-%m-%d')
+test_store_raw['Date_formatted'] = pd.to_datetime(test_store_raw['Date'], format='%Y-%m-%d')
 
 
 # ## convert StateHolidays
 # a = public holiday, b = Easter holiday, c = Christmas, 0 = None
 
-# In[16]:
+# In[66]:
 
 state_holidays = {'a':1, 'b':2, 'c':3, '0':0}
 
-
-# In[17]:
-
 train_store_raw['StateHolidy_formatted'] = train_store_raw['StateHoliday'].replace(state_holidays)
-
-
-# In[18]:
-
-train_store_raw.head()
-
-
-# In[19]:
-
-train_store_raw.info()
+test_store_raw['StateHolidy_formatted'] = test_store_raw['StateHoliday'].replace(state_holidays)
 
 
 # ## replace StoreType
 #  differentiates between 4 different store models: a, b, c, d
 
-# In[20]:
+# In[67]:
 
 store_types = {'a':0, 'b':1, 'c':2, 'd':3}
 train_store_raw['StoreType_formatted'] = train_store_raw['StoreType'].replace(store_types)
-
-
-# In[21]:
+test_store_raw['StoreType_formatted'] = test_store_raw['StoreType'].replace(store_types)
 
 # replace Assortment
 # describes an assortment level: a = basic, b = extra, c = extended
 
-
-# In[22]:
-
 assortments = {'a':0, 'b':1, 'c':2}
 train_store_raw['Assortment_formatted'] = train_store_raw['Assortment'].replace(assortments)
-
-
-# In[23]:
-
-train_store_raw.head()
-
-
-# In[24]:
-
-train_store_raw.info()
+test_store_raw['Assortment_formatted'] = test_store_raw['Assortment'].replace(assortments)
 
 
 # ## convert PromoInteval
 
-# In[25]:
-
-train_store_raw['PromoInterval']
-
-
-# In[26]:
-
-train_store_raw['PromoInterval'].iloc[0] == np.nan
-
-
-# In[27]:
-
-train_store_raw['PromoInterval'].value_counts().plot(kind='bar')
-
-
-# In[28]:
-
-train_store_raw['PromoInterval'].iloc[len(train_store_raw['PromoInterval'])-1]
-
-
-# In[29]:
-
-# replace them into number
-
-
-# In[30]:
+# In[68]:
 
 def formatPromoInterval(string):
     intervals={'Jan,Apr,Jul,Oct':1, 'Feb,May,Aug,Nov':2, 'Mar,Jun,Sept,Dec':3}
@@ -236,213 +188,52 @@ def formatPromoInterval(string):
     return months
 
 
-# In[31]:
-
-formatPromoInterval(train_store_raw['PromoInterval'].iloc[0])
-
-
-# In[32]:
-
-train_store_raw['PromoInterval_formatted'] = train_store_raw['PromoInterval'].apply(lambda x: formatPromoInterval(x))
-
-
-# In[33]:
-
-pd.set_option('display.max_columns', None)
-
-
-# In[34]:
-
-train_store_raw.tail()
-
-
-# In[35]:
-
-train_ready = train_store_raw[['Store', 'DayOfWeek','Date_formated', 'Sales', 'Customers', 'Open', 'Promo', 'StateHolidy_formatted', 'SchoolHoliday', 'StoreType_formatted', 'Assortment_formatted', 'CompetitionDistance', 'CompetitionOpenSinceMonth', 'CompetitionOpenSinceYear', 'Promo2', 'Promo2SinceWeek', 'Promo2SinceYear', 'PromoInterval_formatted']]
-
-
-# In[36]:
-
-train_ready.tail()
-
-
-# In[37]:
-
-train_ready.info()
-
-
-# In[38]:
-
-train_ready['EpochTime'] = train_ready['Date_formated'].astype('int64')
-
-
-# In[39]:
-
-train_ready.tail()
-
-
-# In[40]:
-
-train_ready['DayOfYear'] = train_ready['Date_formated'].dt.dayofyear
-
-
-# In[41]:
-
-train_ready.head()
-
-
-# In[42]:
-
-df = pd.DataFrame({'year': train_ready['CompetitionOpenSinceYear'],'month': train_ready['CompetitionOpenSinceMonth']})
-df['day']=1
-
-
-# In[43]:
-
-df_1 = pd.to_datetime(df)
-
-
-# In[44]:
-
-df2 = train_ready['Date_formated'] - df_1
-
-
-# In[45]:
-
-train_ready['CompetitionOpenSinceDays'] = df2.astype('timedelta64[D]')
-
-
-# In[46]:
-
-train_ready.tail()
-
-
-# In[47]:
-
-def calPromo2SinceDate(df):
-    r = float('nan')
-    if not math.isnan(df['Promo2SinceWeek']) and not math.isnan(df['Promo2SinceYear']):
-        d = "{0}-{1}".format(int(df['Promo2SinceYear']), int(df['Promo2SinceWeek']))
-        r = datetime.strptime(d + '-0', "%Y-%W-%w")
-    return r
-
-
-# In[48]:
-
-s = train_ready[['Promo2SinceWeek', 'Promo2SinceYear']].apply(calPromo2SinceDate, axis=1)
-
-
-# In[49]:
-
-df = s.to_frame()
-
-
-# In[50]:
-
-df = pd.to_datetime(s)
-
-
-# In[51]:
-
-df2 = train_ready['Date_formated'] - df
-
-
-# In[52]:
-
-train_ready['Promo2SinceDays'] = df2.astype('timedelta64[D]')
-
-
-# In[53]:
-
-train_ready.head(1000)
-
-
-# In[54]:
-
-avg = np.average(train_ready['CompetitionOpenSinceDays'][train_ready['CompetitionOpenSinceDays'].isnull() == False])
-
-
-# In[55]:
-
-train_ready['CompetitionOpenSinceDays'].fillna(avg, inplace=True)
-
-
-# In[56]:
-
-avg = np.average(train_ready['Promo2SinceDays'][train_ready['Promo2SinceDays'].isnull() == False])
-
-
-# In[57]:
-
-train_ready['Promo2SinceDays'].fillna(avg, inplace=True)
-
-
-# In[58]:
-
-train_ready.head()
-
-
-# In[59]:
-
-avg = np.average(train_ready['CompetitionOpenSinceMonth'][train_ready['CompetitionOpenSinceMonth'].isnull() == False])
-
-
-# In[60]:
-
-train_ready['CompetitionOpenSinceMonth'].fillna(avg, inplace=True)
-
-
-# In[61]:
-
-avg = np.average(train_ready['CompetitionOpenSinceYear'][train_ready['CompetitionOpenSinceYear'].isnull() == False])
-
-
-# In[62]:
-
-train_ready['CompetitionOpenSinceYear'].fillna(avg, inplace=True)
-
-
-# In[63]:
-
-train_ready.head()
-
-
-# In[64]:
-
-avg = np.average(train_ready['CompetitionDistance'][train_ready['CompetitionDistance'].isnull() == False])
-
-
-# In[65]:
-
-train_ready['CompetitionDistance'].fillna(avg, inplace=True)
-
-
-# In[66]:
-
-avg = np.average(train_ready['Promo2SinceWeek'][train_ready['Promo2SinceWeek'].isnull() == False])
-
-
-# In[67]:
-
-train_ready['Promo2SinceWeek'].fillna(avg, inplace=True)
-
-
-# In[68]:
-
-avg = np.average(train_ready['Promo2SinceYear'][train_ready['Promo2SinceYear'].isnull() == False])
-
-
 # In[69]:
 
-train_ready['Promo2SinceYear'].fillna(avg, inplace=True)
+train_store_raw['PromoInterval_formatted'] = train_store_raw['PromoInterval'].apply(lambda x: formatPromoInterval(x))
+test_store_raw['PromoInterval_formatted'] = test_store_raw['PromoInterval'].apply(lambda x: formatPromoInterval(x))
 
 
 # In[70]:
 
+train_store_raw.tail()
+
+
+# In[71]:
+
+test_store_raw.tail()
+
+
+# In[72]:
+
+train_ready = train_store_raw[['Store', 'DayOfWeek','Date_formatted', 'Sales', 'Customers', 'Open', 'Promo', 'StateHolidy_formatted', 'SchoolHoliday', 'StoreType_formatted', 'Assortment_formatted', 'CompetitionDistance', 'CompetitionOpenSinceMonth', 'CompetitionOpenSinceYear', 'Promo2', 'Promo2SinceWeek', 'Promo2SinceYear', 'PromoInterval_formatted']]
+test_ready = test_store_raw[['Id','Store', 'DayOfWeek','Date_formatted', 'Open', 'Promo', 'StateHolidy_formatted', 'SchoolHoliday', 'StoreType_formatted', 'Assortment_formatted', 'CompetitionDistance', 'CompetitionOpenSinceMonth', 'CompetitionOpenSinceYear', 'Promo2', 'Promo2SinceWeek', 'Promo2SinceYear', 'PromoInterval_formatted']]
+
+
+# In[73]:
+
+avg = np.average(train_ready['CompetitionOpenSinceMonth'][train_ready['CompetitionOpenSinceMonth'].isnull() == False])
+
+train_ready['CompetitionOpenSinceMonth'].fillna(avg, inplace=True)
+
+avg = np.average(train_ready['CompetitionOpenSinceYear'][train_ready['CompetitionOpenSinceYear'].isnull() == False])
+
+train_ready['CompetitionOpenSinceYear'].fillna(avg, inplace=True)
+
+avg = np.average(train_ready['CompetitionDistance'][train_ready['CompetitionDistance'].isnull() == False])
+
+train_ready['CompetitionDistance'].fillna(avg, inplace=True)
+
+avg = np.average(train_ready['Promo2SinceWeek'][train_ready['Promo2SinceWeek'].isnull() == False])
+
+train_ready['Promo2SinceWeek'].fillna(avg, inplace=True)
+
+avg = np.average(train_ready['Promo2SinceYear'][train_ready['Promo2SinceYear'].isnull() == False])
+
+train_ready['Promo2SinceYear'].fillna(avg, inplace=True)
+
 print train_ready['Store'].isnull().values.any()
 print train_ready['DayOfWeek'].isnull().values.any()
-print train_ready['DayOfYear'].isnull().values.any()
-print train_ready['EpochTime'].isnull().values.any()
 print train_ready['Customers'].isnull().values.any()
 print train_ready['Open'].isnull().values.any()
 print train_ready['Promo'].isnull().values.any()
@@ -459,210 +250,167 @@ print train_ready['Promo2SinceYear'].isnull().values.any()
 print train_ready['PromoInterval_formatted'].isnull().values.any()
 
 
-# # Data Explore
-
-# In[85]:
-
-# scatter = scatter_matrix(train_ready, figsize=(60,60))
-
-
-# * from the scatter matrix we see sales is highly related to: customers, competitionInDistance and competitionOpenInYear, let's focus on these three
-# * or we could run a random forest to tell what are the important features
-
-# In[71]:
-
-feature_columns = ['Store', 'DayOfWeek', 'DayOfYear','EpochTime', 'Open', 'Promo', 'StateHolidy_formatted', 'SchoolHoliday', 'StoreType_formatted', 'Assortment_formatted', 'CompetitionDistance', 'CompetitionOpenSinceMonth', 'CompetitionOpenSinceYear', 'Promo2', 'Promo2SinceWeek', 'Promo2SinceYear','PromoInterval_formatted','CompetitionOpenSinceDays','Promo2SinceDays']
-target_coumn = ['Sales']
-
-
-# In[120]:
-
-## use randomForestRegressor to determine feature importances
-# x = train_ready[feature_columns]
-# y = train_ready[target_coumn]
-
-# rfr = RandomForestRegressor()
-# rfr.fit(x,y)
-
-
-# In[121]:
-
-# print "Features sorted by their score:"
-# print sorted(zip(map(lambda x: round(x, 4), rfr.feature_importances_), feature_columns), 
-#              reverse=True)
-
-
-# In[130]:
-
-feature_columns = ['Date_formated','Open', 'CompetitionDistance', 'Store', 'Promo', 'DayOfWeek', 'CompetitionOpenSinceMonth', 'DayOfYear', 'CompetitionOpenSinceYear', 'CompetitionOpenSinceDays', 'StoreType_formatted', 'Assortment_formatted', 'EpochTime', 'Promo2SinceWeek', 'Promo2SinceYear', 'PromoInterval_formatted', 'Promo2SinceDays', 'Promo2', 'SchoolHoliday', 'StateHolidy_formatted']
-target_coumn = ['Sales']
-
-
-# In[123]:
-
-# x = train_ready[feature_columns]
-# y = train_ready[target_coumn]
-
-# rfr = RandomForestRegressor()
-# rfr.fit(x,y)
-
-
-# In[72]:
-
-# result seems not good, try to use TimeSeries analysis
-
-
-# In[73]:
-
-train_ready[feature_columns].head()
-
-
 # In[74]:
 
-train_ready.info()
+avg = np.average(test_ready['CompetitionOpenSinceMonth'][test_ready['CompetitionOpenSinceMonth'].isnull() == False])
+
+test_ready['CompetitionOpenSinceMonth'].fillna(avg, inplace=True)
+
+avg = np.average(test_ready['CompetitionOpenSinceYear'][test_ready['CompetitionOpenSinceYear'].isnull() == False])
+
+test_ready['CompetitionOpenSinceYear'].fillna(avg, inplace=True)
+
+avg = np.average(test_ready['CompetitionDistance'][test_ready['CompetitionDistance'].isnull() == False])
+
+test_ready['CompetitionDistance'].fillna(avg, inplace=True)
+
+avg = np.average(test_ready['Promo2SinceWeek'][test_ready['Promo2SinceWeek'].isnull() == False])
+
+test_ready['Promo2SinceWeek'].fillna(avg, inplace=True)
+
+avg = np.average(test_ready['Promo2SinceYear'][test_ready['Promo2SinceYear'].isnull() == False])
+
+test_ready['Promo2SinceYear'].fillna(avg, inplace=True)
+
+print test_ready['Store'].isnull().values.any()
+print test_ready['DayOfWeek'].isnull().values.any()
+print test_ready['Open'].isnull().values.any()
+print test_ready['Promo'].isnull().values.any()
+print test_ready['StateHolidy_formatted'].isnull().values.any()
+print test_ready['SchoolHoliday'].isnull().values.any()
+print test_ready['StoreType_formatted'].isnull().values.any()
+print test_ready['Assortment_formatted'].isnull().values.any()
+print test_ready['CompetitionDistance'].isnull().values.any()
+print test_ready['CompetitionOpenSinceMonth'].isnull().values.any()
+print test_ready['CompetitionOpenSinceYear'].isnull().values.any()
+print test_ready['Promo2'].isnull().values.any()
+print test_ready['Promo2SinceWeek'].isnull().values.any()
+print test_ready['Promo2SinceYear'].isnull().values.any()
+print test_ready['PromoInterval_formatted'].isnull().values.any()
 
 
 # In[75]:
 
-train_ready_ts = train_ready[['Date_formated', 'Sales']]
-train_ready_ts.set_index('Date_formated', inplace=True)
-train_ready_ts
+train_ready.head()
 
 
 # In[76]:
 
-print(train_ready_ts.info())
-
-
-# In[77]:
-
-def test_stationarity(timeseries):
-    
-    #Determing rolling statistics
-    rolmean = pd.rolling_mean(timeseries, window=12)
-    rolstd = pd.rolling_std(timeseries, window=12)
-
-    #Plot rolling statistics:
-    orig = plt.plot(timeseries, color='blue',label='Original')
-    mean = plt.plot(rolmean, color='red', label='Rolling Mean')
-    std = plt.plot(rolstd, color='black', label = 'Rolling Std')
-    plt.legend(loc='best')
-    plt.title('Rolling Mean & Standard Deviation')
-    plt.show(block=False)
-    
-    #Perform Dickey-Fuller test:
-    print 'Results of Dickey-Fuller Test:'
-    dftest = adfuller(timeseries, autolag='AIC')
-    dfoutput = pd.Series(dftest[0:4], index=['Test Statistic','p-value','#Lags Used','Number of Observations Used'])
-    for key,value in dftest[4].items():
-        dfoutput['Critical Value (%s)'%key] = value
-    print dfoutput
-
-
-# In[169]:
-
-# train_ready_ts.plot(figsize=(300,30))
+train_ready.info()
 
 
 # In[78]:
 
-# Predict using ARIMA
+test_ready.head()
 
 
-# In[80]:
+# In[79]:
 
-ts_log = np.log(train_ready_ts)
-ts_log_diff = ts_log - ts_log.shift()
-# ts_log_diff.plot()
+test_ready.info()
 
+
+# # Data Explore
 
 # In[81]:
 
-ts_log = ts_log.replace([np.inf, -np.inf], np.nan)
-ts_log.dropna(inplace=True)
+train_ready.columns
 
 
 # In[82]:
 
-ts_log_diff = ts_log_diff.replace([np.inf, -np.inf], np.nan)
+feature_columns = [u'Store', u'DayOfWeek', u'Customers',
+       u'Open', u'Promo', u'StateHolidy_formatted', u'SchoolHoliday',
+       u'StoreType_formatted', u'Assortment_formatted', u'CompetitionDistance',
+       u'CompetitionOpenSinceMonth', u'CompetitionOpenSinceYear', u'Promo2',
+       u'Promo2SinceWeek', u'Promo2SinceYear', u'PromoInterval_formatted',
+       u'EpochTime', u'DayOfYear', u'CompetitionOpenSinceDays',
+       u'Promo2SinceDays']
+target_coumn = ['Sales']
 
 
 # In[83]:
 
-ts_log_diff.dropna(inplace=True)
+train_ready.head()
 
-
-# In[193]:
-
-# test_stationarity(ts_log_diff)
-
-
-# In[ ]:
-
-lag_acf = acf(ts_log_diff, nlags=10)
-lag_pacf = pacf(ts_log_diff, nlags=10, method='ols')
-
-
-# In[203]:
-
-#Plot ACF: 
-plt.subplot(121) 
-plt.plot(lag_acf)
-plt.axhline(y=0,linestyle='--',color='gray')
-plt.axhline(y=-1.96/np.sqrt(len(ts_log_diff)),linestyle='--',color='red')
-plt.axhline(y=1.96/np.sqrt(len(ts_log_diff)),linestyle='--',color='green')
-plt.title('Autocorrelation Function')
-print('ploting acf.....')
-plt.savefig('Plot_acf.png')
-
-# In[202]:
-
-#Plot PACF:
-plt.subplot(122)
-plt.plot(lag_pacf)
-plt.axhline(y=0,linestyle='--',color='gray')
-plt.axhline(y=-1.96/np.sqrt(len(ts_log_diff)),linestyle='--',color='red')
-plt.axhline(y=1.96/np.sqrt(len(ts_log_diff)),linestyle='--',color='green')
-plt.title('Partial Autocorrelation Function')
-print('ploting pacf.....')
-plt.tight_layout()
-plt.savefig('Plot_pcaf.png')
-
-
-# **from there we could see p in PACF is 1, q in ACF is 1**
-# [understand p,q,d](https://www.analyticsvidhya.com/blog/2016/02/time-series-forecasting-codes-python/)
 
 # In[84]:
 
-# Test Predict
+len(train_ready['Store'].unique())
+
+
+# In[91]:
+
+train_ready_g = train_ready.groupby(['Store'])
+
+
+# In[92]:
+
+len(train_ready_g.groups)
+
+
+# In[643]:
+
+g1 = train_ready_g.get_group(10).sort('Date_formatted')
+
+
+# In[644]:
+
+# let's run it store by store
 
 
 # In[ ]:
-print('Building models.....')
-#AR Model
-model = ARIMA(ts_log, order=(2, 1, 0))  
-results_AR = model.fit(disp=-1)  
-plt.plot(ts_log_diff)
-plt.plot(results_AR.fittedvalues, color='red')
-plt.title('RSS: %.4f'% sum((results_AR.fittedvalues-ts_log_diff)**2))
-plt.savefig('AR.png')
+
+
+
+
+# # Predict
+
+# In[80]:
+
+test_ready_g = test_ready.groupby('Store')
+
+
+# In[81]:
+
+test_ready_g.get_group(1)
+
+
+# In[82]:
+
+test_ready.info()
+
+
+# In[343]:
+
+pred1 = rfr.predict(test_ready_with_ts1[feature_columns])
+
+
+# In[344]:
+
+df1 = pd.DataFrame(pred1, columns=['Sales'])
+
+
+# In[345]:
+
+df1['Id'] = range(1, len(df1)+1)
+
+
+# In[346]:
+
+df1 = df1[['Id','Sales']]
+
+
+# In[347]:
+
+df1.columns
+
+
+# In[348]:
+
+df1.to_csv('pred1.csv', index=False)
+
 
 # In[ ]:
 
-#MA Model
-model = ARIMA(ts_log, order=(0, 1, 2))  
-results_MA = model.fit(disp=-1)  
-plt.plot(ts_log_diff)
-plt.plot(results_MA.fittedvalues, color='red')
-plt.title('RSS: %.4f'% sum((results_MA.fittedvalues-ts_log_diff)**2))
-plt.savefig('MA.png')
 
-# In[ ]:
 
-#ARIMA model
-model = ARIMA(ts_log, order=(2, 1, 2))  
-results_ARIMA = model.fit(disp=-1)  
-plt.plot(ts_log_diff)
-plt.plot(results_ARIMA.fittedvalues, color='red')
-plt.title('RSS: %.4f'% sum((results_ARIMA.fittedvalues-ts_log_diff)**2))
-plt.savefig('Combined.png')
